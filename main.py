@@ -4,6 +4,7 @@ from src.detector import YoloDetector
 from src.reid_extractor import ReIDExtractor
 from src.database import EmbeddingDB
 from src.utils import draw_boxes
+from src.line_crossing_detector import LineCrossingDetector
 import config
 
 def main():
@@ -32,6 +33,16 @@ def main():
     # Réduire la résolution pour de meilleures performances
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+    
+    # Initialiser le détecteur de ligne
+    # La ligne est verticale au milieu de l'écran
+    # Vous pouvez modifier ces coordonnées selon vos besoins
+    line_crossing_detector = LineCrossingDetector(
+        line_start=(config.CAMERA_WIDTH // 2, 0),
+        line_end=(config.CAMERA_WIDTH // 2, config.CAMERA_HEIGHT),
+        frame_width=config.CAMERA_WIDTH,
+        frame_height=config.CAMERA_HEIGHT
+    )
     
     prev_time = time.time()
     fps = 0
@@ -80,7 +91,7 @@ def main():
         ids = []
         confidences = []
         
-        for emb in embeddings:
+        for i, emb in enumerate(embeddings):
             # Chercher un match
             match_id = db.find_match(emb, min_confidence=config.MIN_CONFIDENCE)
             
@@ -95,9 +106,23 @@ def main():
             
             ids.append(match_id)
             confidences.append(confidence)
+            
+            # Vérifier le franchissement de ligne
+            center_x = int((boxes[i][0] + boxes[i][2]) / 2)
+            center_y = int((boxes[i][1] + boxes[i][3]) / 2)
+            
+            has_crossed, direction = line_crossing_detector.check_crossing(match_id, center_x, center_y)
+            if has_crossed:
+                print(f"✅ ID {match_id} a franchi la ligne {direction}")
         
         # 4. Affichage avec confiance
         frame = draw_boxes(frame, boxes, ids, confidences)
+        
+        # Dessiner la ligne virtuelle
+        frame = line_crossing_detector.draw_line(frame, color=(0, 255, 0), thickness=2)
+        
+        # Afficher les événements de franchissement récents
+        frame = line_crossing_detector.draw_crossing_events(frame, history_limit=10)
         
         # Calcul FPS
         current_time = time.time()
@@ -134,10 +159,17 @@ def main():
     
     # Afficher les stats finales
     final_stats = db.get_stats()
+    crossing_stats = line_crossing_detector.get_stats()
+    
     print("\n📊 Statistiques finales:")
     print(f"  - Total personnes uniques: {final_stats['total_new_ids']}")
     print(f"  - Total matches: {final_stats['total_matches']}")
     print(f"  - Total mises à jour: {final_stats['total_updates']}")
+    print(f"\n📊 Statistiques de franchissement de ligne:")
+    print(f"  - Total franchissements: {crossing_stats['total_crossings']}")
+    print(f"  - Franchissements vers la droite (→): {crossing_stats['crossings_down']}")
+    print(f"  - Franchissements vers la gauche (←): {crossing_stats['crossings_up']}")
+    print(f"  - Personnes uniques ayant franchi: {crossing_stats['unique_persons_crossed']}")
     print("✅ Fin du traitement.")
 
 if __name__ == "__main__":
